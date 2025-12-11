@@ -6,20 +6,20 @@ pub use get_subgroup_size::*;
 use std::ops::Range;
 
 use bevy::{
-    asset::{load_internal_asset, AssetId, RenderAssetUsages},
+    asset::{AssetId, RenderAssetUsages, load_internal_asset},
     prelude::*,
     render::{
+        Render, RenderApp, RenderSystems,
         render_asset::RenderAssets,
         render_resource::{
-            binding_types::{storage_buffer, storage_buffer_read_only},
             BindGroup, BindGroupEntries, BindGroupLayout, BindGroupLayoutDescriptor,
             BindGroupLayoutEntries, BufferUsages, CachedComputePipelineId, CachedPipelineState,
             CommandEncoder, ComputePass, ComputePassDescriptor, ComputePipelineDescriptor,
             PipelineCache, PushConstantRange, ShaderStages,
+            binding_types::{storage_buffer, storage_buffer_read_only},
         },
         renderer::RenderDevice,
         storage::{GpuShaderStorageBuffer, ShaderStorageBuffer},
-        Render, RenderApp, RenderSystems,
     },
 };
 use bevy_shader::ShaderDefVal;
@@ -944,16 +944,14 @@ pub fn dispatch_workgroup_ext(
 
 #[cfg(test)]
 mod tests {
-    use bevy::{
-        render::{
-            render_resource::{
-                Buffer, BufferAddress, BufferDescriptor, BufferInitDescriptor,
-                CommandEncoderDescriptor, MapMode, PollType,
-            },
-            renderer::RenderQueue,
-            Render, RenderPlugin, RenderSystems,
+    use bevy::render::{
+        Render, RenderPlugin, RenderSystems,
+        render_resource::{
+            Buffer, BufferAddress, BufferDescriptor, BufferInitDescriptor,
+            CommandEncoderDescriptor, MapMode, PollType,
         },
-        scene::ScenePlugin,
+        renderer::RenderQueue,
+        settings::{RenderCreation, WgpuSettings},
     };
     use serial_test::serial;
 
@@ -1041,19 +1039,33 @@ mod tests {
     fn create_unit_test_app(number_of_keys: u32) -> App {
         let mut app = App::new();
 
-        app.add_plugins(MinimalPlugins)
-            .add_plugins(WindowPlugin::default())
-            .add_plugins(AssetPlugin::default())
-            .add_plugins(ScenePlugin)
-            .add_plugins(RenderPlugin {
-                synchronous_pipeline_compilation: true,
-                ..default()
-            })
-            .add_plugins(ImagePlugin::default())
-            .add_plugins(GetSubgroupSizePlugin)
-            .add_plugins(RadixSortPlugin {
-                settings: number_of_keys.into(),
-            });
+        app.add_plugins(
+            DefaultPlugins
+                .build()
+                .disable::<bevy::winit::WinitPlugin>()
+                .disable::<bevy::log::LogPlugin>()
+                .set(RenderPlugin {
+                    render_creation: RenderCreation::Automatic(WgpuSettings {
+                        // Prefer backends that work in headless mode
+                        backends: Some(
+                            bevy::render::settings::Backends::VULKAN
+                                | bevy::render::settings::Backends::DX12,
+                        ),
+                        ..default()
+                    }),
+                    synchronous_pipeline_compilation: true,
+                    ..default()
+                })
+                .set(WindowPlugin {
+                    primary_window: None,
+                    exit_condition: bevy::window::ExitCondition::DontExit,
+                    ..default()
+                }),
+        )
+        .add_plugins(GetSubgroupSizePlugin)
+        .add_plugins(RadixSortPlugin {
+            settings: number_of_keys.into(),
+        });
 
         app.sub_app_mut(RenderApp).add_systems(
             Render,
