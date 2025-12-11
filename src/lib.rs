@@ -6,22 +6,25 @@ pub use get_subgroup_size::*;
 use std::ops::Range;
 
 use bevy::{
-    asset::{RenderAssetUsages, load_internal_asset},
+    asset::{load_internal_asset, AssetId, RenderAssetUsages},
     prelude::*,
     render::{
-        Render, RenderApp, RenderSet,
         render_asset::RenderAssets,
         render_resource::{
-            BindGroup, BindGroupEntries, BindGroupLayout, BindGroupLayoutEntries, BufferUsages,
-            CachedComputePipelineId, CachedPipelineState, CommandEncoder, ComputePass,
-            ComputePassDescriptor, ComputePipelineDescriptor, PipelineCache, PushConstantRange,
-            ShaderDefVal, ShaderStages,
             binding_types::{storage_buffer, storage_buffer_read_only},
+            BindGroup, BindGroupEntries, BindGroupLayout, BindGroupLayoutDescriptor,
+            BindGroupLayoutEntries, BufferUsages, CachedComputePipelineId, CachedPipelineState,
+            CommandEncoder, ComputePass, ComputePassDescriptor, ComputePipelineDescriptor,
+            PipelineCache, PushConstantRange, ShaderStages,
         },
         renderer::RenderDevice,
         storage::{GpuShaderStorageBuffer, ShaderStorageBuffer},
+        Render, RenderApp, RenderSystems,
     },
 };
+use bevy_shader::ShaderDefVal;
+
+use uuid::Uuid;
 
 pub const NUMBER_OF_BYTES_PER_KEY: u32 = std::mem::size_of::<u32>() as u32;
 /// The number of bits per pass that can be processed.
@@ -77,8 +80,10 @@ pub const NUMBER_OF_THREADS_PER_WORKGROUP: u32 = NUMBER_OF_RADIX;
 /// TODO: Refactor to automatically select configurations to adapt to different hardware devices for maximum performance.
 pub const NUMBER_OF_ROWS_PER_WORKGROUP: u32 = 7;
 
-pub const RADIX_SORT_SHADER_HANDLE: Handle<Shader> =
-    Handle::weak_from_u128(174050053373014597864115292867874370814);
+pub const RADIX_SORT_SHADER_HANDLE: Handle<Shader> = Handle::Uuid(
+    Uuid::from_u128(174050053373014597864115292867874370814),
+    core::marker::PhantomData,
+);
 
 /// When pass is even:
 ///
@@ -91,8 +96,10 @@ pub const RADIX_SORT_SHADER_HANDLE: Handle<Shader> =
 /// ```wgsl
 /// @binding(3) var<storage, read_write> global_keys_o: array<u32>;
 /// ```
-pub const EVE_GLOBAL_KEYS_STORAGE_BUFFER_HANDLE: Handle<ShaderStorageBuffer> =
-    Handle::weak_from_u128(271984633984723648237498237498274982749);
+pub const EVE_GLOBAL_KEYS_STORAGE_BUFFER_HANDLE: Handle<ShaderStorageBuffer> = Handle::Uuid(
+    Uuid::from_u128(271984633984723648237498237498274982749),
+    core::marker::PhantomData,
+);
 /// When pass is even:
 ///
 /// ```wgsl
@@ -104,13 +111,17 @@ pub const EVE_GLOBAL_KEYS_STORAGE_BUFFER_HANDLE: Handle<ShaderStorageBuffer> =
 /// ```wgsl
 /// @binding(4) var<storage, read_write> global_vals_o: array<u32>;
 /// ```
-pub const EVE_GLOBAL_VALS_STORAGE_BUFFER_HANDLE: Handle<ShaderStorageBuffer> =
-    Handle::weak_from_u128(198374692837469283746928374692837469283);
+pub const EVE_GLOBAL_VALS_STORAGE_BUFFER_HANDLE: Handle<ShaderStorageBuffer> = Handle::Uuid(
+    Uuid::from_u128(198374692837469283746928374692837469283),
+    core::marker::PhantomData,
+);
 /// ```wgsl
 /// @binding(2) var<storage, read_write> global_blocks: array<u32>;
 /// ```
-pub const GLOBAL_BLOCKS_STORAGE_BUFFER_HANDLE: Handle<ShaderStorageBuffer> =
-    Handle::weak_from_u128(287346928374692837469283746928374692837);
+pub const GLOBAL_BLOCKS_STORAGE_BUFFER_HANDLE: Handle<ShaderStorageBuffer> = Handle::Uuid(
+    Uuid::from_u128(287346928374692837469283746928374692837),
+    core::marker::PhantomData,
+);
 /// When pass is even:
 ///
 /// ```wgsl
@@ -122,8 +133,10 @@ pub const GLOBAL_BLOCKS_STORAGE_BUFFER_HANDLE: Handle<ShaderStorageBuffer> =
 /// ```wgsl
 /// @binding(0) var<storage, read_write> global_keys_i: array<u32>;
 /// ```
-pub const ODD_GLOBAL_KEYS_STORAGE_BUFFER_HANDLE: Handle<ShaderStorageBuffer> =
-    Handle::weak_from_u128(340282366910938463463374607431768211234);
+pub const ODD_GLOBAL_KEYS_STORAGE_BUFFER_HANDLE: Handle<ShaderStorageBuffer> = Handle::Uuid(
+    Uuid::from_u128(340282366910938463463374607431768211234),
+    core::marker::PhantomData,
+);
 /// When pass is even:
 ///
 /// ```wgsl
@@ -135,8 +148,10 @@ pub const ODD_GLOBAL_KEYS_STORAGE_BUFFER_HANDLE: Handle<ShaderStorageBuffer> =
 /// ```wgsl
 /// @binding(1) var<storage, read_write> global_vals_i: array<u32>;
 /// ```
-pub const ODD_GLOBAL_VALS_STORAGE_BUFFER_HANDLE: Handle<ShaderStorageBuffer> =
-    Handle::weak_from_u128(123456789012345678901234567890123456789);
+pub const ODD_GLOBAL_VALS_STORAGE_BUFFER_HANDLE: Handle<ShaderStorageBuffer> = Handle::Uuid(
+    Uuid::from_u128(123456789012345678901234567890123456789),
+    core::marker::PhantomData,
+);
 
 pub struct RadixSortPlugin {
     pub settings: RadixSortSettings,
@@ -159,7 +174,7 @@ impl Plugin for RadixSortPlugin {
             .add_systems(
                 Render,
                 RadixSortBindGroup::initialize
-                    .in_set(RenderSet::PrepareBindGroups)
+                    .in_set(RenderSystems::PrepareBindGroups)
                     .run_if(not(resource_exists::<RadixSortBindGroup>)),
             );
     }
@@ -436,93 +451,129 @@ impl FromWorld for RadixSortPipeline {
         let pipeline_cache = world.resource::<PipelineCache>();
         let subgroup_size = world.resource::<SubgroupSize>();
 
-        let bind_group_layout = render_device.create_bind_group_layout(
-            "radix_sort bindgroup layout",
-            &BindGroupLayoutEntries::sequential(
-                ShaderStages::COMPUTE,
-                (
-                    // Read unsorted(sub-sort) keys from this buffer
-                    storage_buffer_read_only::<u32>(false),
-                    // Read unsorted(sub-sort) vals from this buffer
-                    storage_buffer_read_only::<u32>(false),
-                    // Read/Write histograms of count of each radix
-                    storage_buffer::<u32>(false),
-                    // Write sorted(sub-sort) keys to this buffer
-                    storage_buffer::<u32>(false),
-                    // Write sorted(sub-sort) vals to this buffer
-                    storage_buffer::<u32>(false),
-                ),
+        let bind_group_layout_entries = BindGroupLayoutEntries::sequential(
+            ShaderStages::COMPUTE,
+            (
+                // Read unsorted(sub-sort) keys from this buffer
+                storage_buffer_read_only::<u32>(false),
+                // Read unsorted(sub-sort) vals from this buffer
+                storage_buffer_read_only::<u32>(false),
+                // Read/Write histograms of count of each radix
+                storage_buffer::<u32>(false),
+                // Write sorted(sub-sort) keys to this buffer
+                storage_buffer::<u32>(false),
+                // Write sorted(sub-sort) vals to this buffer
+                storage_buffer::<u32>(false),
             ),
         );
 
-        let cdefs = vec![
+        let bind_group_layout = render_device.create_bind_group_layout(
+            Some("radix_sort bindgroup layout"),
+            &bind_group_layout_entries,
+        );
+
+        let bind_group_layout_descriptor = BindGroupLayoutDescriptor {
+            label: "radix_sort bindgroup layout".into(),
+            entries: bind_group_layout_entries.to_vec(),
+        };
+
+        let common_shader_defs: Vec<ShaderDefVal> = vec![
             ShaderDefVal::UInt(
-                "NUMBER_OF_THREADS_PER_WORKGROUP".into(),
+                "NUMBER_OF_THREADS_PER_WORKGROUP".to_string(),
                 NUMBER_OF_THREADS_PER_WORKGROUP,
             ),
             ShaderDefVal::UInt(
-                "NUMBER_OF_ROWS_PER_WORKGROUP".into(),
+                "NUMBER_OF_ROWS_PER_WORKGROUP".to_string(),
                 NUMBER_OF_ROWS_PER_WORKGROUP,
             ),
-            ShaderDefVal::UInt("NUMBER_OF_RADIX".into(), NUMBER_OF_RADIX),
-            ShaderDefVal::UInt("NUMBER_OF_RADIX_BITS".into(), NUMBER_OF_RADIX_BITS),
+            ShaderDefVal::UInt("NUMBER_OF_RADIX".to_string(), NUMBER_OF_RADIX),
+            ShaderDefVal::UInt("NUMBER_OF_RADIX_BITS".to_string(), NUMBER_OF_RADIX_BITS),
             ShaderDefVal::UInt(
-                "NUMBER_OF_THREADS_PER_SUBGROUP".into(),
-                subgroup_size.into(),
+                "NUMBER_OF_THREADS_PER_SUBGROUP".to_string(),
+                u32::from(*subgroup_size),
             ),
         ];
 
         let count_radix_pipeline =
             pipeline_cache.queue_compute_pipeline(ComputePipelineDescriptor {
                 label: Some("radix_sort: count_radix pipeline".into()),
-                layout: vec![bind_group_layout.clone()],
+                layout: vec![bind_group_layout_descriptor.clone()],
                 push_constant_ranges: vec![PUSH_CONSTANT_RANGES],
                 shader: RADIX_SORT_SHADER_HANDLE,
-                shader_defs: [cdefs.as_slice(), &["COUNT_RADIX_PIPELINE".into()]].concat(),
-                entry_point: "main".into(),
+                shader_defs: [
+                    common_shader_defs.clone(),
+                    vec![ShaderDefVal::Bool("COUNT_RADIX_PIPELINE".to_string(), true)],
+                ]
+                .concat(),
+                entry_point: Some("main".into()),
                 zero_initialize_workgroup_memory: false,
             });
 
         let scan_upsweep_pipeline =
             pipeline_cache.queue_compute_pipeline(ComputePipelineDescriptor {
                 label: Some("radix_sort: scan_upsweep pipeline".into()),
-                layout: vec![bind_group_layout.clone()],
+                layout: vec![bind_group_layout_descriptor.clone()],
                 push_constant_ranges: vec![PUSH_CONSTANT_RANGES],
                 shader: RADIX_SORT_SHADER_HANDLE,
-                shader_defs: [cdefs.as_slice(), &["SCAN_UP_SWEEP_PIPELINE".into()]].concat(),
-                entry_point: "main".into(),
+                shader_defs: [
+                    common_shader_defs.clone(),
+                    vec![ShaderDefVal::Bool(
+                        "SCAN_UP_SWEEP_PIPELINE".to_string(),
+                        true,
+                    )],
+                ]
+                .concat(),
+                entry_point: Some("main".into()),
                 zero_initialize_workgroup_memory: false,
             });
 
         let scan_dnsweep_pipeline =
             pipeline_cache.queue_compute_pipeline(ComputePipelineDescriptor {
                 label: Some("radix_sort: scan_dnsweep pipeline".into()),
-                layout: vec![bind_group_layout.clone()],
+                layout: vec![bind_group_layout_descriptor.clone()],
                 push_constant_ranges: vec![PUSH_CONSTANT_RANGES],
                 shader: RADIX_SORT_SHADER_HANDLE,
-                shader_defs: [cdefs.as_slice(), &["SCAN_DOWN_SWEEP_PIPELINE".into()]].concat(),
-                entry_point: "main".into(),
+                shader_defs: [
+                    common_shader_defs.clone(),
+                    vec![ShaderDefVal::Bool(
+                        "SCAN_DOWN_SWEEP_PIPELINE".to_string(),
+                        true,
+                    )],
+                ]
+                .concat(),
+                entry_point: Some("main".into()),
                 zero_initialize_workgroup_memory: false,
             });
 
         let scan_last_block_pipeline =
             pipeline_cache.queue_compute_pipeline(ComputePipelineDescriptor {
                 label: Some("radix_sort: scan_last_block pipeline".into()),
-                layout: vec![bind_group_layout.clone()],
+                layout: vec![bind_group_layout_descriptor.clone()],
                 push_constant_ranges: vec![PUSH_CONSTANT_RANGES],
                 shader: RADIX_SORT_SHADER_HANDLE,
-                shader_defs: [cdefs.as_slice(), &["SCAN_LAST_BLOCK_PIPELINE".into()]].concat(),
-                entry_point: "main".into(),
+                shader_defs: [
+                    common_shader_defs.clone(),
+                    vec![ShaderDefVal::Bool(
+                        "SCAN_LAST_BLOCK_PIPELINE".to_string(),
+                        true,
+                    )],
+                ]
+                .concat(),
+                entry_point: Some("main".into()),
                 zero_initialize_workgroup_memory: false,
             });
 
         let scatter_pipeline = pipeline_cache.queue_compute_pipeline(ComputePipelineDescriptor {
             label: Some("radix_sort: scatter pipeline".into()),
-            layout: vec![bind_group_layout.clone()],
+            layout: vec![bind_group_layout_descriptor.clone()],
             push_constant_ranges: vec![PUSH_CONSTANT_RANGES],
             shader: RADIX_SORT_SHADER_HANDLE,
-            shader_defs: [cdefs.as_slice(), &["SCATTER_PIPELINE".into()]].concat(),
-            entry_point: "main".into(),
+            shader_defs: [
+                common_shader_defs,
+                vec![ShaderDefVal::Bool("SCATTER_PIPELINE".to_string(), true)],
+            ]
+            .concat(),
+            entry_point: Some("main".into()),
             zero_initialize_workgroup_memory: false,
         });
 
@@ -895,15 +946,16 @@ pub fn dispatch_workgroup_ext(
 mod tests {
     use bevy::{
         render::{
-            Render, RenderPlugin, RenderSet,
             render_resource::{
                 Buffer, BufferAddress, BufferDescriptor, BufferInitDescriptor,
-                CommandEncoderDescriptor, Maintain, MapMode,
+                CommandEncoderDescriptor, MapMode, PollType,
             },
             renderer::RenderQueue,
+            Render, RenderPlugin, RenderSystems,
         },
         scene::ScenePlugin,
     };
+    use serial_test::serial;
 
     use crate::GetSubgroupSizePlugin;
 
@@ -1006,7 +1058,7 @@ mod tests {
         app.sub_app_mut(RenderApp).add_systems(
             Render,
             prepare_unit_test_helper
-                .in_set(RenderSet::PrepareResources)
+                .in_set(RenderSystems::PrepareResources)
                 .run_if(not(resource_exists::<UnitTestHelper>)),
         );
 
@@ -1127,7 +1179,9 @@ mod tests {
                 keys_slice.map_async(MapMode::Read, |_| ());
                 vals_slice.map_async(MapMode::Read, |_| ());
 
-                render_device.poll(Maintain::Wait).panic_on_timeout();
+                render_device
+                    .poll(PollType::wait_indefinitely())
+                    .expect("Failed to poll device");
 
                 // assert! sorted keys
                 {
@@ -1162,12 +1216,13 @@ mod tests {
             };
 
         app.sub_app_mut(RenderApp)
-            .add_systems(Render, unit_test_system.in_set(RenderSet::Cleanup));
+            .add_systems(Render, unit_test_system.in_set(RenderSystems::Cleanup));
 
         run_once(&mut app);
     }
 
     #[test]
+    #[serial]
     fn test_rs_1() {
         run_radix_sort_test(1, 4, true, true);
         run_radix_sort_test(1, 3, false, true);
@@ -1175,6 +1230,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_rs_100() {
         run_radix_sort_test(100, 4, true, true);
         run_radix_sort_test(100, 3, false, true);
@@ -1182,6 +1238,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_rs_256() {
         run_radix_sort_test(256, 4, true, true);
         run_radix_sort_test(256, 3, false, true);
@@ -1189,6 +1246,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_rs_257() {
         run_radix_sort_test(257, 4, true, true);
         run_radix_sort_test(257, 3, false, true);
@@ -1196,6 +1254,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_rs_1000() {
         run_radix_sort_test(1_000, 4, true, true);
         run_radix_sort_test(1_000, 3, false, true);
@@ -1203,6 +1262,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_rs_16x256() {
         run_radix_sort_test(16 * 256, 4, true, true);
         run_radix_sort_test(16 * 256, 3, false, true);
@@ -1210,6 +1270,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_rs_16_000_000() {
         run_radix_sort_test(16_000_000, 4, true, true);
         run_radix_sort_test(16_000_000, 3, false, true);
@@ -1217,6 +1278,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_rs_16_777_216() {
         run_radix_sort_test(16_777_216, 4, true, true);
         run_radix_sort_test(16_777_216, 3, false, true);

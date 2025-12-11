@@ -7,7 +7,7 @@ use bevy::{
         render_resource::{
             BindGroup, BindGroupEntries, BindGroupLayoutEntries, Buffer, BufferDescriptor,
             BufferUsages, CommandEncoderDescriptor, ComputePassDescriptor, ComputePipeline,
-            Maintain, MapMode, PipelineLayoutDescriptor, RawComputePipelineDescriptor,
+            MapMode, PipelineLayoutDescriptor, PollType, RawComputePipelineDescriptor,
             ShaderModuleDescriptor, ShaderSource, ShaderStages, binding_types::storage_buffer,
         },
         renderer::{RenderDevice, RenderQueue},
@@ -64,10 +64,12 @@ impl GetSubgroupSizeUtils {
             &BindGroupEntries::single(buffer.as_entire_binding()),
         );
 
-        let shader = render_device.create_shader_module(ShaderModuleDescriptor {
-            label: Some("get_subgroup_size shader"),
-            source: ShaderSource::Wgsl(GET_SUBGROUPS_SIZE_SHADER.into()),
-        });
+        let shader = unsafe {
+            render_device.create_shader_module(ShaderModuleDescriptor {
+                label: Some("get_subgroup_size shader"),
+                source: ShaderSource::Wgsl(GET_SUBGROUPS_SIZE_SHADER.into()),
+            })
+        };
 
         let pipeline_layout = render_device.create_pipeline_layout(&PipelineLayoutDescriptor {
             label: Some("get_subgroup_size pipeline layout"),
@@ -125,7 +127,9 @@ impl GetSubgroupSizeUtils {
         {
             let slice = staging_buf.slice(0..4);
             slice.map_async(MapMode::Read, |_| ());
-            render_device.poll(Maintain::Wait).panic_on_timeout();
+            render_device
+                .poll(PollType::wait_indefinitely())
+                .expect("Failed to poll device");
             let subgroup_size: u32 = bytemuck::cast_slice(&slice.get_mapped_range())[0];
             staging_buf.unmap();
 
